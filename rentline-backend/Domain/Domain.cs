@@ -43,6 +43,8 @@ public class Property : IMultiTenant
     public string? Country { get; set; }
     public ICollection<Unit> Units { get; set; } = new List<Unit>();
     public ICollection<PropertyImage> Images { get; set; } = new List<PropertyImage>();
+    public Guid? OwnerUserId { get; set; }
+    public AppUser? Owner { get; set; }
 }
 
 public class PropertyImage : IMultiTenant

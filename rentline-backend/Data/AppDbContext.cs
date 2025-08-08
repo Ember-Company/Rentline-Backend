@@ -20,6 +20,10 @@ public class AppDbContext : DbContext
     public DbSet<Lease> Leases => Set<Lease>();
     public DbSet<MaintenanceRequest> MaintenanceRequests => Set<MaintenanceRequest>();
     public DbSet<Invite> Invites => Set<Invite>();
+    public DbSet<UserSetting> UserSettings => Set<UserSetting>();
+    public DbSet<OrganizationSetting> OrganizationSettings => Set<OrganizationSetting>();
+
+
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -76,8 +80,14 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Property>(e =>
         {
-            e.HasKey(x => x.Id);
-            e.HasMany(x => x.Units).WithOne(u => u.Property).HasForeignKey(u => u.PropertyId);
+            e.HasKey(p => p.Id);
+            e.HasOne(p => p.Owner)
+                .WithMany()
+                .HasForeignKey(p => p.OwnerUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // optional: enforce uniqueness per org+name if desired
+             e.HasIndex(p => new { p.OrganizationId, p.Name }).IsUnique();
         });
 
         modelBuilder.Entity<Unit>(e =>
@@ -105,6 +115,18 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.Token).IsUnique();
             e.Property(x => x.Email).IsRequired();
+        });
+
+        modelBuilder.Entity<UserSetting>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.UserId, x.OrganizationId }).IsUnique();
+        });
+
+        modelBuilder.Entity<OrganizationSetting>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.OrganizationId).IsUnique();
         });
     }
 }

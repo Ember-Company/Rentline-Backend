@@ -15,6 +15,8 @@ builder.Services.AddDbContext<AppDbContext>(opt =>
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<InviteService>();
 builder.Services.AddSingleton<CloudinaryService>();
+builder.Services.AddScoped<ISettingsService, SettingsService>();
+
 
 builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.ReferenceHandler =
         System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles);

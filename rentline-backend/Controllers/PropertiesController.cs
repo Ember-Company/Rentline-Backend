@@ -28,12 +28,16 @@ public class PropertiesController : ControllerBase
 
     [HttpPost]
     [Authorize(Policy = "OwnerOrManager")]
-    public async Task<IActionResult> Create([FromBody] CreatePropertyRequest req)
+    public async Task<IActionResult> Create([FromBody] CreatePropertyRequest req, Guid currentUserId,
+    string currentUserRole,
+    Organization org)
     {
+
         var orgId = Guid.Parse(User.FindFirstValue("orgId")!);
         var p = new Property { Id = Guid.NewGuid(), OrganizationId = orgId, Name = req.Name, Street=req.Street, City=req.City, State=req.State, PostalCode=req.PostalCode, Country=req.Country };
         _db.Properties.Add(p);
         await _db.SaveChangesAsync();
+
         return Ok(p);
     }
 
