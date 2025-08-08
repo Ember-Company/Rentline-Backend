@@ -112,3 +112,23 @@ public class Invite : IMultiTenant
     public DateTime? AcceptedAt { get; set; }
     public InviteStatus Status { get; set; } = InviteStatus.Pending;
 }
+
+public class UserSetting : IMultiTenant
+{
+    public Guid Id { get; set; }
+    public Guid UserId { get; set; }
+    public Guid OrganizationId { get; set; }
+    public string Language { get; set; } = "en";
+    public string Theme { get; set; } = "light";
+    public AppUser? User { get; set; }
+}
+
+public class OrganizationSetting : IMultiTenant
+{
+    public Guid Id { get; set; }
+    public Guid OrganizationId { get; set; }
+    public string DefaultLanguage { get; set; } = "en";
+    public string DefaultTheme { get; set; } = "light";
+    public string Currency { get; set; } = "BRL";
+    public Organization? Organization { get; set; }
+}

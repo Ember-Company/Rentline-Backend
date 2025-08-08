@@ -65,8 +65,18 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("TenantOnly", p => p.RequireRole("Tenant"));
 });
 
+builder.Services.AddCors(o =>
+{
+    o.AddPolicy("DevCors", p =>
+        p.WithOrigins("http://localhost:5173")
+         .AllowAnyHeader()
+         .AllowAnyMethod()
+         .AllowCredentials());
+});
+
 var app = builder.Build();
 
+app.UseCors("DevCors");
 app.UseAuthentication();
 
 // Set CurrentOrgId from claims per request
