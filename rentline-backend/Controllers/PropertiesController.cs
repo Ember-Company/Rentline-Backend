@@ -12,43 +12,54 @@ namespace rentline_backend.Controllers;
 
 [ApiController]
 [Route("api/properties")]
-public class PropertiesController : ControllerBase
+public class PropertiesController(AppDbContext db, CloudinaryService cloud, PropertyService _service) : ControllerBase
 {
-    private readonly AppDbContext _db;
-    private readonly CloudinaryService _cloud;
-    public PropertiesController(AppDbContext db, CloudinaryService cloud) { _db = db; _cloud = cloud; }
-
     [HttpGet]
     [Authorize(Policy = "OrgMember")]
     public async Task<IActionResult> List()
     {
-        var data = await _db.Properties.Include(p => p.Images).ToListAsync();
+        var data = await db.Properties.Include(p => p.Images).ToListAsync();
         return Ok(data);
     }
 
     [HttpPost]
     [Authorize(Policy = "OwnerOrManager")]
-    public async Task<IActionResult> Create([FromBody] CreatePropertyRequest req, Guid currentUserId,
-    string currentUserRole,
-    Organization org)
+    public async Task<IActionResult> Create([FromBody] CreatePropertyRequest req)
     {
+        var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!Guid.TryParse(userIdStr, out var currentUserId))
+            return Unauthorized("Invalid user ID.");
 
-        var orgId = Guid.Parse(User.FindFirstValue("orgId")!);
-        var p = new Property { Id = Guid.NewGuid(), OrganizationId = orgId, Name = req.Name, Street=req.Street, City=req.City, State=req.State, PostalCode=req.PostalCode, Country=req.Country };
-        _db.Properties.Add(p);
-        await _db.SaveChangesAsync();
+        var roleClaim = User.FindFirstValue(ClaimTypes.Role)
+              ?? User.FindFirstValue("role");
 
-        return Ok(p);
+        if (!Enum.TryParse<UserRole>(roleClaim, ignoreCase: true, out UserRole currentUserRole))
+        {
+            currentUserRole = UserRole.Viewer;
+        }
+
+        var orgIdStr = User.FindFirstValue("orgId");
+        if (!Guid.TryParse(orgIdStr, out var orgId))
+            return Forbid("No organisation ID present.");
+        
+
+        var org = await db.Organizations.FirstOrDefaultAsync(o => o.Id == orgId);
+        if (org == null)
+            return NotFound("Organisation not found.");
+
+        var result = await _service.CreatePropertyAsync(req, currentUserId, currentUserRole, org);
+
+        return Ok(result);
     }
 
     [HttpPut("{id:guid}")]
     [Authorize(Policy = "OwnerOrManager")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdatePropertyRequest req)
     {
-        var p = await _db.Properties.FindAsync(id);
+        var p = await db.Properties.FindAsync(id);
         if (p == null) return NotFound();
         p.Name = req.Name; p.Street=req.Street; p.City=req.City; p.State=req.State; p.PostalCode=req.PostalCode; p.Country=req.Country;
-        await _db.SaveChangesAsync();
+        await db.SaveChangesAsync();
         return Ok(p);
     }
 
@@ -56,10 +67,10 @@ public class PropertiesController : ControllerBase
     [Authorize(Policy = "OwnerOrManager")]
     public async Task<IActionResult> Delete(Guid id)
     {
-        var p = await _db.Properties.FindAsync(id);
+        var p = await db.Properties.FindAsync(id);
         if (p == null) return NotFound();
-        _db.Properties.Remove(p);
-        await _db.SaveChangesAsync();
+        db.Properties.Remove(p);
+        await db.SaveChangesAsync();
         return NoContent();
     }
 
@@ -67,13 +78,13 @@ public class PropertiesController : ControllerBase
     [Authorize(Policy = "OwnerOrManager")]
     public async Task<IActionResult> UploadImage(Guid id, IFormFile file)
     {
-        var p = await _db.Properties.FindAsync(id);
+        var p = await db.Properties.FindAsync(id);
         if (p == null) return NotFound();
         using var s = file.OpenReadStream();
-        var url = await _cloud.UploadAsync(s, file.FileName, "rentline/properties");
+        var url = await cloud.UploadAsync(s, file.FileName, "rentline/properties");
         var img = new PropertyImage { Id = Guid.NewGuid(), OrganizationId = p.OrganizationId, PropertyId = p.Id, Url = url };
-        _db.PropertyImages.Add(img);
-        await _db.SaveChangesAsync();
+        db.PropertyImages.Add(img);
+        await db.SaveChangesAsync();
         return Ok(img);
     }
 }
