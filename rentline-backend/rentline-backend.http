@@ -1,0 +1,6 @@
+@rentline_backend_HostAddress = http://localhost:5254
+
+GET {{rentline_backend_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

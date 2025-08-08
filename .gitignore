@@ -1,0 +1,111 @@
+﻿############################
+# OS junk
+############################
+.DS_Store
+Thumbs.db
+
+############################
+# Build output
+############################
+bin/
+obj/
+[Bb]uild/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]*/
+[Ww][Ii][Nn]32/
+dist/
+publish/
+out/
+
+############################
+# Visual Studio / Rider / VS Code
+############################
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+*.DotSettings.user
+
+# VS Code — ignore workspace, keep useful JSON configs
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+############################
+# NuGet / packages
+############################
+*.nupkg
+*.snupkg
+# If you use packages/ folder (legacy), ignore it:
+**/packages/*
+!**/packages/build/
+!**/packages/repositories.config
+.nuget/
+
+############################
+# Logs & diagnostics
+############################
+*.log
+logs/
+log/
+Log/
+*.tlog
+*.svclog
+
+# Crash dumps / profiling
+*.dmp
+*.mdmp
+*.psess
+*.vsp
+*.vspx
+*.etl
+
+############################
+# Databases & local data
+############################
+*.mdf
+*.ldf
+*.ndf
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+############################
+# EF Core
+############################
+# Keep migrations in source control!
+# Data/Migrations/  <-- DO NOT IGNORE
+
+############################
+# Secrets & local overrides
+############################
+secrets.json
+.env
+.env.*
+appsettings.*.local.json
+appsettings.Local.json
+appsettings.Development.local.json
+
+# Optional: if you don’t want to commit publish profiles
+*.pubxml
+*.publishsettings
+
+############################
+# Frontend (if present in the same repo)
+############################
+node_modules/
+bower_components/
+.yarn/
+.pnpm-store/
