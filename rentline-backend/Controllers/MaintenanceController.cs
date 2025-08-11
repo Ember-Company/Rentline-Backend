@@ -1,49 +1,80 @@
-
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using rentline_backend.Data;
-using rentline_backend.Domain;
 using rentline_backend.DTOs;
-using System.Security.Claims;
+using rentline_backend.Domain.Entities;
+using rentline_backend.Domain.Enums;
+using rentline_backend.Data;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 
-namespace rentline_backend.Controllers;
-
-[ApiController]
-[Route("api/maintenance")]
-public class MaintenanceController : ControllerBase
+namespace rentline_backend.Controllers
 {
-    private readonly AppDbContext _db;
-    public MaintenanceController(AppDbContext db) { _db = db; }
-
-    [HttpGet]
-    [Authorize(Policy = "OwnerOrManager")]
-    public async Task<IActionResult> List()
+    [ApiController]
+    [Authorize(Policy = "OrgMember")]
+    [Route("api/maintenance")]
+    public class MaintenanceController : ControllerBase
     {
-        var list = await _db.MaintenanceRequests.OrderByDescending(m => m.CreatedAt).ToListAsync();
-        return Ok(list);
-    }
+        private readonly RentlineDbContext _db;
+        public MaintenanceController(RentlineDbContext db)
+        {
+            _db = db;
+        }
 
-    [HttpPost]
-    [Authorize(Policy = "TenantOnly")]
-    public async Task<IActionResult> Create([FromBody] CreateMaintenanceRequest req)
-    {
-        var uid = Guid.Parse(User.FindFirstValue("sub")!);
-        var orgId = Guid.Parse(User.FindFirstValue("orgId")!);
-        var m = new MaintenanceRequest { Id = Guid.NewGuid(), OrganizationId = orgId, UnitId = req.UnitId, CreatedByUserId = uid, Title = req.Title, Description = req.Description };
-        _db.MaintenanceRequests.Add(m);
-        await _db.SaveChangesAsync();
-        return Ok(m);
-    }
+        // GET: /api/maintenance
+        [HttpGet]
+        [Authorize(Policy = "OwnerOrManager")]
+        public async Task<IActionResult> GetAll()
+        {
+            var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
+            var requests = await _db.MaintenanceRequests
+                .Where(r => r.OrgId == orgId)
+                .Include(r => r.Unit)
+                .Include(r => r.CreatedByUser)
+                .ToListAsync();
+            return Ok(requests);
+        }
 
-    [HttpPost("{id:guid}/status")]
-    [Authorize(Policy = "MaintenanceOrManager")]
-    public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] string status)
-    {
-        var m = await _db.MaintenanceRequests.FindAsync(id);
-        if (m == null) return NotFound();
-        m.Status = status;
-        await _db.SaveChangesAsync();
-        return Ok(m);
+        // POST: /api/maintenance
+        [HttpPost]
+        [Authorize(Policy = "TenantOnly")]
+        public async Task<IActionResult> Create([FromBody] CreateMaintenanceRequest request)
+        {
+            var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
+            var userId = Guid.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)!.Value);
+            // Validate unit exists
+            var unit = await _db.Units.FirstOrDefaultAsync(u => u.Id == request.UnitId && u.OrgId == orgId);
+            if (unit == null)
+                return NotFound("Unit not found");
+            var mr = new MaintenanceRequest
+            {
+                OrgId = orgId,
+                UnitId = request.UnitId,
+                Title = request.Title,
+                Description = request.Description,
+                Status = MaintenanceStatus.Pending,
+                CreatedByUserId = userId,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.MaintenanceRequests.Add(mr);
+            await _db.SaveChangesAsync();
+            return CreatedAtAction(nameof(GetAll), new { }, mr);
+        }
+
+        // POST: /api/maintenance/{id}/status
+        [HttpPost("{id}/status")]
+        [Authorize(Policy = "MaintenanceOrManager")]
+        public async Task<IActionResult> UpdateStatus([FromRoute] Guid id, [FromBody] UpdateMaintenanceStatusRequest request)
+        {
+            var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
+            var mr = await _db.MaintenanceRequests.FirstOrDefaultAsync(r => r.Id == id && r.OrgId == orgId);
+            if (mr == null)
+                return NotFound();
+            mr.Status = request.Status;
+            mr.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
     }
 }

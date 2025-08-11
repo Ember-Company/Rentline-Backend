@@ -1,25 +1,56 @@
-
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using rentline_backend.DTOs;
-using rentline_backend.Services;
-using System.Security.Claims;
+using rentline_backend.Domain.Entities;
+using rentline_backend.Data;
+using System;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Threading.Tasks;
 
-namespace rentline_backend.Controllers;
-
-[ApiController]
-[Route("api/invites")]
-public class InvitesController : ControllerBase
+namespace rentline_backend.Controllers
 {
-    private readonly InviteService _svc;
-    public InvitesController(InviteService svc) { _svc = svc; }
-
-    [HttpPost]
+    [ApiController]
     [Authorize(Policy = "OwnerOrManager")]
-    public async Task<IActionResult> Send([FromBody] SendInviteRequest req)
+    [Route("api/invites")]
+    public class InvitesController : ControllerBase
     {
-        var orgId = Guid.Parse(User.FindFirstValue("orgId")!);
-        var inv = await _svc.CreateTenantInviteAsync(orgId, req.Email);
-        return Ok(new { token = inv.Token, email = inv.Email, expiresAt = inv.ExpiresAt });
+        private readonly RentlineDbContext _db;
+        public InvitesController(RentlineDbContext db)
+        {
+            _db = db;
+        }
+
+        // POST: /api/invites
+        [HttpPost]
+        public async Task<IActionResult> CreateInvite([FromBody] CreateInviteRequest request)
+        {
+            var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
+            // Ensure email not already a user
+            var existingUser = await _db.Users.FirstOrDefaultAsync(u => u.Email == request.Email && u.OrgId == orgId);
+            if (existingUser != null)
+                return Conflict("A user with this email already exists.");
+            // Generate a random token
+            var tokenBytes = new byte[32];
+            using (var rng = RandomNumberGenerator.Create())
+            {
+                rng.GetBytes(tokenBytes);
+            }
+            var token = Convert.ToBase64String(tokenBytes).TrimEnd('=');
+            var invite = new Invite
+            {
+                OrgId = orgId,
+                Email = request.Email,
+                Token = token,
+                Role = request.Role,
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddDays(request.ExpiresInDays),
+                Used = false
+            };
+            _db.Invites.Add(invite);
+            await _db.SaveChangesAsync();
+            return Ok(new { invite.Token, invite.Email, invite.ExpiresAt });
+        }
     }
 }

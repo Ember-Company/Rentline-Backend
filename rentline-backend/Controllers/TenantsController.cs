@@ -1,24 +1,29 @@
-
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using rentline_backend.Domain.Enums;
 using rentline_backend.Data;
-using rentline_backend.Domain;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 
-namespace rentline_backend.Controllers;
-
-[ApiController]
-[Route("api/tenants")]
-[Authorize(Policy = "OwnerOrManager")]
-public class TenantsController : ControllerBase
+namespace rentline_backend.Controllers
 {
-    private readonly AppDbContext _db;
-    public TenantsController(AppDbContext db) { _db = db; }
-
-    [HttpGet]
-    public async Task<IActionResult> List()
+    [ApiController]
+    [Route("api/tenants")]
+    [Authorize(Policy = "OwnerOrManager")]
+    public class TenantsController(RentlineDbContext db) : ControllerBase
     {
-        var tenants = await _db.Users.Where(u => u.Role == UserRole.Tenant).ToListAsync();
-        return Ok(tenants);
+
+        // GET: /api/tenants
+        [HttpGet]
+        public async Task<IActionResult> GetTenants()
+        {
+            var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
+            var tenants = await Task.Run(() => db.Users
+                .Where(u => u.OrgId == orgId && u.Role == Role.Tenant)
+                .Select(u => new { u.Id, u.Email, u.DisplayName })
+                .ToList());
+            return Ok(tenants);
+        }
     }
 }

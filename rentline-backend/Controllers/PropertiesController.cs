@@ -1,90 +1,117 @@
-
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using rentline_backend.Data;
-using rentline_backend.Domain;
 using rentline_backend.DTOs;
-using rentline_backend.Services;
-using System.Security.Claims;
+using rentline_backend.Domain.Entities;
+using rentline_backend.Data;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 
-namespace rentline_backend.Controllers;
-
-[ApiController]
-[Route("api/properties")]
-public class PropertiesController(AppDbContext db, CloudinaryService cloud, PropertyService _service) : ControllerBase
+namespace rentline_backend.Controllers
 {
-    [HttpGet]
+    [ApiController]
+    [Route("api/properties")]
     [Authorize(Policy = "OrgMember")]
-    public async Task<IActionResult> List()
+    public class PropertiesController : ControllerBase
     {
-        var data = await db.Properties.Include(p => p.Images).ToListAsync();
-        return Ok(data);
-    }
-
-    [HttpPost]
-    [Authorize(Policy = "OwnerOrManager")]
-    public async Task<IActionResult> Create([FromBody] CreatePropertyRequest req)
-    {
-        var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        if (!Guid.TryParse(userIdStr, out var currentUserId))
-            return Unauthorized("Invalid user ID.");
-
-        var roleClaim = User.FindFirstValue(ClaimTypes.Role)
-              ?? User.FindFirstValue("role");
-
-        if (!Enum.TryParse<UserRole>(roleClaim, ignoreCase: true, out UserRole currentUserRole))
+        private readonly RentlineDbContext _db;
+        public PropertiesController(RentlineDbContext db)
         {
-            currentUserRole = UserRole.Viewer;
+            _db = db;
         }
 
-        var orgIdStr = User.FindFirstValue("orgId");
-        if (!Guid.TryParse(orgIdStr, out var orgId))
-            return Forbid("No organisation ID present.");
-        
+        // GET: /api/properties
+        [HttpGet]
+        public async Task<IActionResult> GetProperties()
+        {
+            var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
+            var properties = await _db.Properties
+                .Where(p => p.OrgId == orgId)
+                .Include(p => p.Units)
+                .ToListAsync();
+            return Ok(properties);
+        }
 
-        var org = await db.Organizations.FirstOrDefaultAsync(o => o.Id == orgId);
-        if (org == null)
-            return NotFound("Organisation not found.");
+        // POST: /api/properties
+        [HttpPost]
+        [Authorize(Policy = "OwnerOrManager")]
+        public async Task<IActionResult> CreateProperty([FromBody] CreatePropertyRequest request)
+        {
+            var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
+            var property = new Property
+            {
+                OrgId = orgId,
+                Name = request.Name,
+                Street = request.Street,
+                City = request.City,
+                State = request.State,
+                PostalCode = request.PostalCode,
+                Country = request.Country,
+                Description = request.Description,
+                Type = request.Type,
+                PurchaseDate = request.PurchaseDate,
+                PurchasePrice = request.PurchasePrice,
+                YearBuilt = request.YearBuilt,
+                LotSizeSqm = request.LotSizeSqm
+            };
+            _db.Properties.Add(property);
+            await _db.SaveChangesAsync();
+            return CreatedAtAction(nameof(GetProperties), new { id = property.Id }, property);
+        }
 
-        var result = await _service.CreatePropertyAsync(req, currentUserId, currentUserRole, org);
+        // PUT: /api/properties/{id}
+        [HttpPut("{id}")]
+        [Authorize(Policy = "OwnerOrManager")]
+        public async Task<IActionResult> UpdateProperty([FromRoute] Guid id, [FromBody] UpdatePropertyRequest request)
+        {
+            var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
+            var property = await _db.Properties.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == orgId);
+            if (property == null)
+                return NotFound();
 
-        return Ok(result);
-    }
+            // Update only provided fields
+            if (request.Name != null) property.Name = request.Name;
+            if (request.Street != null) property.Street = request.Street;
+            if (request.City != null) property.City = request.City;
+            if (request.State != null) property.State = request.State;
+            if (request.PostalCode != null) property.PostalCode = request.PostalCode;
+            if (request.Country != null) property.Country = request.Country;
+            if (request.Description != null) property.Description = request.Description;
+            if (request.Type != null) property.Type = request.Type.Value;
+            if (request.PurchaseDate != null) property.PurchaseDate = request.PurchaseDate;
+            if (request.PurchasePrice != null) property.PurchasePrice = request.PurchasePrice;
+            if (request.YearBuilt != null) property.YearBuilt = request.YearBuilt;
+            if (request.LotSizeSqm != null) property.LotSizeSqm = request.LotSizeSqm;
 
-    [HttpPut("{id:guid}")]
-    [Authorize(Policy = "OwnerOrManager")]
-    public async Task<IActionResult> Update(Guid id, [FromBody] UpdatePropertyRequest req)
-    {
-        var p = await db.Properties.FindAsync(id);
-        if (p == null) return NotFound();
-        p.Name = req.Name; p.Street=req.Street; p.City=req.City; p.State=req.State; p.PostalCode=req.PostalCode; p.Country=req.Country;
-        await db.SaveChangesAsync();
-        return Ok(p);
-    }
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
 
-    [HttpDelete("{id:guid}")]
-    [Authorize(Policy = "OwnerOrManager")]
-    public async Task<IActionResult> Delete(Guid id)
-    {
-        var p = await db.Properties.FindAsync(id);
-        if (p == null) return NotFound();
-        db.Properties.Remove(p);
-        await db.SaveChangesAsync();
-        return NoContent();
-    }
+        // DELETE: /api/properties/{id}
+        [HttpDelete("{id}")]
+        [Authorize(Policy = "OwnerOrManager")]
+        public async Task<IActionResult> DeleteProperty([FromRoute] Guid id)
+        {
+            var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
+            var property = await _db.Properties.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == orgId);
+            if (property == null)
+                return NotFound();
+            _db.Properties.Remove(property);
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
 
-    [HttpPost("{id:guid}/images")]
-    [Authorize(Policy = "OwnerOrManager")]
-    public async Task<IActionResult> UploadImage(Guid id, IFormFile file)
-    {
-        var p = await db.Properties.FindAsync(id);
-        if (p == null) return NotFound();
-        using var s = file.OpenReadStream();
-        var url = await cloud.UploadAsync(s, file.FileName, "rentline/properties");
-        var img = new PropertyImage { Id = Guid.NewGuid(), OrganizationId = p.OrganizationId, PropertyId = p.Id, Url = url };
-        db.PropertyImages.Add(img);
-        await db.SaveChangesAsync();
-        return Ok(img);
+        // POST: /api/properties/{id}/images
+        [HttpPost("{id}/images")]
+        [Authorize(Policy = "OwnerOrManager")]
+        public IActionResult UploadImage([FromRoute] Guid id)
+        {
+            // This endpoint would typically accept multipart/form-data to
+            // upload an image to a cloud provider. As a placeholder, we
+            // return NotImplemented. Implement integration with a
+            // storage service such as Cloudinary or AWS S3 here.
+            return StatusCode(501, "Image upload not implemented in this template.");
+        }
     }
 }

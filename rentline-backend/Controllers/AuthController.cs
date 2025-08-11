@@ -1,55 +1,131 @@
-
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using rentline_backend.Data;
-using rentline_backend.Domain;
 using rentline_backend.DTOs;
 using rentline_backend.Services;
+using rentline_backend.Domain.Entities;
+using rentline_backend.Domain.Enums;
+using rentline_backend.Data;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 
-namespace rentline_backend.Controllers;
-
-[ApiController]
-[Route("api/auth")]
-public class AuthController : ControllerBase
+namespace rentline_backend.Controllers
 {
-    private readonly AppDbContext _db;
-    private readonly AuthService _auth;
-    private readonly InviteService _invites;
-
-    public AuthController(AppDbContext db, AuthService auth, InviteService invites)
+    [ApiController]
+    [Route("api/auth")]
+    public class AuthController : ControllerBase
     {
-        _db = db; _auth = auth; _invites = invites;
-    }
+        private readonly RentlineDbContext _db;
+        private readonly IJwtTokenService _tokenService;
+        private readonly IPasswordHasher _hasher;
 
-    [HttpPost("register-org")]
-    [AllowAnonymous]
-    public async Task<IActionResult> RegisterOrg([FromBody] RegisterOrgRequest req)
-    {
-        var type = req.OrgType.Equals("Agency", StringComparison.OrdinalIgnoreCase) ? OrgType.Agency : OrgType.Landlord;
-        var (user, org) = await _auth.RegisterOrgAsync(req.OrgName, type, req.Email, req.Password, req.DisplayName);
-        var jwt = _auth.IssueJwt(user);
-        return Ok(new { token = jwt, orgId = org.Id, role = user.Role.ToString() });
-    }
+        public AuthController(RentlineDbContext db, IJwtTokenService tokenService, IPasswordHasher hasher)
+        {
+            _db = db;
+            _tokenService = tokenService;
+            _hasher = hasher;
+        }
 
-    [HttpPost("login")]
-    [AllowAnonymous]
-    public async Task<IActionResult> Login([FromBody] LoginRequest req)
-    {
-        var u = await _auth.ValidateUserAsync(req.Email, req.Password);
-        if (u == null) return Unauthorized();
-        var jwt = _auth.IssueJwt(u);
-        return Ok(new { token = jwt, orgId = u.OrganizationId, role = u.Role.ToString() });
-    }
+        /// <summary>
+        ///     Registers a new organisation and its first user. Returns a
+        ///     JWT token for subsequent authenticated requests.
+        /// </summary>
+        [HttpPost("register-org")]
+        [AllowAnonymous]
+        public async Task<IActionResult> RegisterOrg([FromBody] RegisterOrgRequest request)
+        {
+            // Validate unique email
+            var existingUser = await _db.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+            if (existingUser != null)
+            {
+                return Conflict("Email already in use.");
+            }
 
-    [HttpPost("accept-invite")]
-    [AllowAnonymous]
-    public async Task<IActionResult> AcceptInvite([FromBody] AcceptInviteRequest req)
-    {
-        var (inv, err) = await _invites.AcceptAsync(req.Token, req.DisplayName, req.Password);
-        if (inv == null) return BadRequest(new { error = err });
-        var user = await _db.Users.FirstAsync(u => u.Email == inv.Email);
-        var jwt = new AuthService(_db, HttpContext.RequestServices.GetRequiredService<IConfiguration>()).IssueJwt(user);
-        return Ok(new { token = jwt, orgId = user.OrganizationId, role = user.Role.ToString() });
+            var org = new Organization
+            {
+                Name = request.OrgName,
+                OrgType = request.OrgType
+            };
+
+            var user = new AppUser
+            {
+                OrgId = org.Id,
+                Email = request.Email,
+                PasswordHash = _hasher.HashPassword(request.Password),
+                DisplayName = request.DisplayName,
+                Role = request.OrgType == OrgType.Landlord ? Role.Landlord : Role.AgencyAdmin,
+                IsEmailVerified = false
+            };
+
+            org.Users.Add(user);
+            _db.Organizations.Add(org);
+            await _db.SaveChangesAsync();
+
+            var token = _tokenService.GenerateToken(user);
+            return Ok(new { token, orgId = org.Id, role = user.Role.ToString() });
+        }
+
+        /// <summary>
+        ///     Authenticates a user with email and password. Returns a JWT
+        ///     on success.
+        /// </summary>
+        [HttpPost("login")]
+        [AllowAnonymous]
+        public async Task<IActionResult> Login([FromBody] LoginRequest request)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+            if (user == null)
+            {
+                return Unauthorized("Invalid credentials.");
+            }
+
+            if (!_hasher.VerifyPassword(request.Password, user.PasswordHash))
+            {
+                return Unauthorized("Invalid credentials.");
+            }
+
+            var token = _tokenService.GenerateToken(user);
+            return Ok(new { token, orgId = user.OrgId, role = user.Role.ToString() });
+        }
+
+        /// <summary>
+        ///     Accepts an invitation using the provided token, creating a
+        ///     new user under the organisation that issued the invite.
+        /// </summary>
+        [HttpPost("accept-invite")]
+        [AllowAnonymous]
+        public async Task<IActionResult> AcceptInvite([FromBody] AcceptInviteRequest request)
+        {
+            var invite = await _db.Invites.FirstOrDefaultAsync(i => i.Token == request.Token);
+            if (invite == null || invite.Used || invite.ExpiresAt < DateTime.UtcNow)
+            {
+                return BadRequest("Invalid or expired invite.");
+            }
+
+            // Ensure the email is still available
+            var existingUser = await _db.Users.FirstOrDefaultAsync(u => u.Email == invite.Email);
+            if (existingUser != null)
+            {
+                return Conflict("Email already in use.");
+            }
+
+            var user = new AppUser
+            {
+                OrgId = invite.OrgId,
+                Email = invite.Email,
+                PasswordHash = _hasher.HashPassword(request.Password),
+                DisplayName = request.DisplayName,
+                Role = invite.Role,
+                IsEmailVerified = true
+            };
+
+            invite.Used = true;
+            _db.Users.Add(user);
+            await _db.SaveChangesAsync();
+
+            var token = _tokenService.GenerateToken(user);
+            return Ok(new { token, orgId = user.OrgId, role = user.Role.ToString() });
+        }
     }
 }

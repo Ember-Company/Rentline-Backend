@@ -1,26 +1,26 @@
-
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using System.Security.Claims;
-using System.Text;
-using rentline_backend.Data;
+using rentline_backend;
 using rentline_backend.Services;
+using rentline_backend.Domain.Enums;
+using rentline_backend.Data;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddDbContext<AppDbContext>(opt =>
-    opt.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+// Add services to the container.
+builder.Services.AddControllers();
 
-builder.Services.AddScoped<AuthService>();
-builder.Services.AddScoped<InviteService>();
-builder.Services.AddSingleton<CloudinaryService>();
-builder.Services.AddScoped<ISettingsService, SettingsService>();
-builder.Services.AddScoped<PropertyService>();
+// Configure DbContext. Connection string should be defined in appsettings.json under ConnectionStrings:Default.
+builder.Services.AddDbContext<RentlineDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 
+// Bind JwtSettings and register token services.
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
+builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
+builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
 
-builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.ReferenceHandler =
-        System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -41,31 +41,45 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// JWT
-var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new Exception("Missing Jwt:Key");
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+// Configure authentication using JWT.
+var jwtSettings = new JwtSettings();
+builder.Configuration.GetSection("Jwt").Bind(jwtSettings);
+var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key));
+
+builder.Services
+    .AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
     .AddJwtBearer(options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ValidateIssuer = false,
-            ValidateAudience = false,
-            NameClaimType = ClaimTypes.NameIdentifier,
-            RoleClaimType = ClaimTypes.Role
+            ValidIssuer = jwtSettings.Issuer,
+            ValidAudience = jwtSettings.Audience,
+            IssuerSigningKey = key
         };
     });
 
-// Authorization policies
+// Configure authorization policies.
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("OrgMember", p => p.RequireClaim("orgId"));
-    options.AddPolicy("OwnerOrManager", p => p.RequireAssertion(ctx =>
-        ctx.User.IsInRole("Landlord") || ctx.User.IsInRole("AgencyAdmin") || ctx.User.IsInRole("Manager")));
-    options.AddPolicy("MaintenanceOrManager", p => p.RequireAssertion(ctx =>
-        ctx.User.IsInRole("Maintenance") || ctx.User.IsInRole("Landlord") || ctx.User.IsInRole("AgencyAdmin") || ctx.User.IsInRole("Manager")));
-    options.AddPolicy("TenantOnly", p => p.RequireRole("Tenant"));
+    options.AddPolicy("OrgMember", policy => policy.RequireClaim("orgId"));
+    options.AddPolicy("OwnerOrManager", policy => policy.RequireRole(
+        Role.Landlord.ToString(),
+        Role.AgencyAdmin.ToString(),
+        Role.Manager.ToString()));
+    options.AddPolicy("MaintenanceOrManager", policy => policy.RequireRole(
+        Role.Maintenance.ToString(),
+        Role.Landlord.ToString(),
+        Role.AgencyAdmin.ToString(),
+        Role.Manager.ToString()));
+    options.AddPolicy("TenantOnly", policy => policy.RequireRole(Role.Tenant.ToString()));
 });
 
 builder.Services.AddCors(o =>
@@ -82,21 +96,23 @@ var app = builder.Build();
 app.UseCors("DevCors");
 app.UseAuthentication();
 
-// Set CurrentOrgId from claims per request
+// Configure the HTTP request pipeline.
+app.UseRouting();
+
 app.Use(async (ctx, next) =>
 {
-    var db = ctx.RequestServices.GetRequiredService<AppDbContext>();
+    var db = ctx.RequestServices.GetRequiredService<RentlineDbContext>();
     var orgClaim = ctx.User?.Claims?.FirstOrDefault(c => c.Type == "orgId")?.Value;
     db.CurrentOrgId = Guid.TryParse(orgClaim, out var g) ? g : null;
     await next();
 });
+
 
 app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
     c.SwaggerEndpoint("/swagger/v1/swagger.json", "Rentline API v1");
 });
-
 
 app.UseAuthorization();
 
